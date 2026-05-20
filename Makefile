@@ -42,6 +42,7 @@ train: ## A3: train + calibrate; writes models/artifacts/<timestamp>/
 
 backtest: ## A4: walk-forward backtest -> backtest_results.parquet + report
 	$(PY) greyhound.betting.backtest      --config $(CONFIG)
+	$(PY) greyhound.betting.report        --config $(CONFIG)
 
 paper-trade: ## A5: daily paper-trading run
 	$(PY) greyhound.live.paper_trade      --config $(CONFIG)
