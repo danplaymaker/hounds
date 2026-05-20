@@ -24,6 +24,24 @@ from scipy.optimize import minimize_scalar
 log = logging.getLogger(__name__)
 
 
+# Columns that must NEVER be features. IDs, group keys, labels, settlement
+# prices, post-race outcomes. Keep in sync with the backtest's skip list.
+NON_FEATURE_COLS: frozenset[str] = frozenset({
+    "race_id", "race_datetime", "dog_id", "track", "won",
+    "grade", "running_style",
+    "bsp", "market_id", "sp", "finish_position", "run_time",
+    "sectional_1", "matched_volume",
+})
+
+
+def select_feature_cols(df: "pl.DataFrame") -> list[str]:
+    """Numeric columns that aren't IDs / labels / post-race state."""
+    return [
+        c for c in df.columns
+        if c not in NON_FEATURE_COLS and df[c].dtype.is_numeric()
+    ]
+
+
 @dataclass
 class LgbmRanker:
     feature_cols: list[str]
@@ -118,6 +136,14 @@ class LgbmRanker:
         self.temperature_ = float(np.exp(res.x))
         log.info("Fit softmax temperature: %.3f", self.temperature_)
 
+    def feature_importances(self, *, importance_type: str = "gain") -> dict[str, float]:
+        """Map feature name -> importance score. `gain` = total split gain
+        attributed to the feature; `split` = number of times used."""
+        if self.booster_ is None:
+            raise RuntimeError("Model not fit")
+        scores = self.booster_.feature_importance(importance_type=importance_type)
+        return dict(zip(self.feature_cols, [float(s) for s in scores]))
+
     def save(self, dir_path: Path) -> None:
         dir_path.mkdir(parents=True, exist_ok=True)
         assert self.booster_ is not None
@@ -127,6 +153,8 @@ class LgbmRanker:
                 "feature_cols": self.feature_cols,
                 "temperature": self.temperature_,
                 "params": self.params,
+                "feature_importance_gain": self.feature_importances(importance_type="gain"),
+                "feature_importance_split": self.feature_importances(importance_type="split"),
             }, f, indent=2)
 
     @classmethod
@@ -164,11 +192,7 @@ def main() -> None:
         raise SystemExit(f"Missing features at {feat_path} — run `make features` first.")
     features = pl.read_parquet(feat_path)
     # Trivial single-shot fit (no walk-forward). Walk-forward lives in backtest.
-    feature_cols = [
-        c for c in features.columns
-        if c not in {"race_id", "race_datetime", "dog_id", "track", "won", "grade", "running_style"}
-        and features[c].dtype.is_numeric()
-    ]
+    feature_cols = select_feature_cols(features)
     model = LgbmRanker(feature_cols=feature_cols, params=cfg.model.lgbm.model_dump())
     n = features.height
     cutoff = int(n * 0.8)

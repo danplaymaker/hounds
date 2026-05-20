@@ -31,7 +31,7 @@ from greyhound.models.calibration import (
     remove_overround,
     renormalise_by_group,
 )
-from greyhound.models.lgbm_ranker import LgbmRanker
+from greyhound.models.lgbm_ranker import LgbmRanker, select_feature_cols
 
 log = logging.getLogger(__name__)
 
@@ -99,20 +99,7 @@ def run_walk_forward(
                  train_end.date(), val_end.date(), test_end.date(),
                  train.height, val.height, test.height)
 
-        # Pick numeric feature columns. Hard blacklist: anything that's an
-        # ID, label, settlement price, or otherwise not legal at bet time.
-        # BSP is the settlement price (and a near-perfect proxy for the
-        # winner) — never a feature; only used in settle math below.
-        skip = {
-            "race_id", "race_datetime", "dog_id", "track", "won",
-            "grade", "running_style",
-            "bsp", "market_id", "sp", "finish_position", "run_time",
-            "sectional_1", "matched_volume",
-        }
-        feature_cols = [
-            c for c in feat.columns
-            if c not in skip and feat[c].dtype.is_numeric()
-        ]
+        feature_cols = select_feature_cols(feat)
 
         if use_market_as_model:
             # Reality check: derive model prob from BSP itself.
