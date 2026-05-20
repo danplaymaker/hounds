@@ -43,6 +43,26 @@ def _max_drawdown(pnls: np.ndarray) -> float:
     return float((equity - peaks).min())
 
 
+def overround_diagnostic(features: pl.DataFrame) -> str:
+    """Per-race overround stats. Underrounded races (< 1.0) signal voided
+    runners — they leak positive 'edge' into the reality check."""
+    lines: list[str] = []
+    by_race = (
+        features
+        .filter(pl.col("bsp").is_not_null() & (pl.col("bsp") > 1.0))
+        .with_columns((1.0 / pl.col("bsp")).alias("_imp"))
+        .group_by("race_id").agg(pl.col("_imp").sum().alias("overround"))
+    )
+    lines.append("--- Per-race overround distribution ---")
+    lines.append(str(by_race["overround"].describe()))
+    n_under = int((by_race["overround"] < 1.0).sum())
+    lines.append(
+        f"Races with overround < 1.0 (likely voided runner): "
+        f"{n_under:,} / {by_race.height:,} ({100*n_under/by_race.height:.2f}%)"
+    )
+    return "\n".join(lines) + "\n"
+
+
 def summarise(bets: pl.DataFrame) -> str:
     if bets.height == 0:
         return "No bets to summarise.\n"
@@ -162,6 +182,11 @@ def main() -> None:
     bets = pl.read_parquet(bets_path)
 
     report = summarise(bets)
+    # Add the overround diagnostic if the features file is available.
+    features_path = cfg.paths.processed_dir / "features.parquet"
+    if features_path.exists():
+        features = pl.read_parquet(features_path)
+        report += "\n" + overround_diagnostic(features)
     print(report)
     out = cfg.paths.reports_dir / "backtest_summary.txt"
     out.parent.mkdir(parents=True, exist_ok=True)

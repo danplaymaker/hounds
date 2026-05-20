@@ -112,6 +112,15 @@ def brier_score(probs: np.ndarray, y: np.ndarray) -> float:
 
 
 def remove_overround(market_prices: np.ndarray, group_ids: np.ndarray) -> np.ndarray:
-    """Convert BSP decimal prices to a de-overrounded probability per race."""
+    """Convert BSP decimal prices to de-overrounded probabilities per race.
+
+    NaN inputs (non-runners) are passed through as NaN and excluded from
+    each race's denominator — runners with missing prices don't pollute
+    their peers' implied probabilities.
+    """
     raw = 1.0 / market_prices
-    return renormalise_by_group(raw, group_ids)
+    unique, inverse = np.unique(group_ids, return_inverse=True)
+    denom = np.zeros(unique.size)
+    np.add.at(denom, inverse, np.where(np.isnan(raw), 0.0, raw))
+    out = raw / denom[inverse]
+    return out
