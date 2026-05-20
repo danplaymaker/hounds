@@ -46,7 +46,7 @@ def build_features_fast(
     scfg = cfg.features.shape
 
     # Pre-compute auxiliary columns the windowed aggregations need.
-    df = (
+    full = (
         runs
         .with_columns([
             # GBGB convention: calc_time = run_time + going_seconds.
@@ -59,6 +59,22 @@ def build_features_fast(
             # 1 = won, 0 = otherwise (null finish -> 0).
             (pl.col("finish_position") == 1).cast(pl.Int8).alias("_win"),
         ])
+    )
+
+    # GBGB occasionally lists a dog twice at the same (dog_id, race_datetime)
+    # — handicap re-allocations, withdrawals, schooling twins. For HISTORY
+    # purposes, only one row per (dog, time) should contribute. We dedupe
+    # to one canonical row per pair (preferring rows with run_time), do the
+    # rolling work on the dedup'd frame, then join the per-row features
+    # back onto the full frame so every output row gets the same feature
+    # values its same-time peer would have.
+    df = (
+        full
+        .with_columns(pl.col("run_time").is_not_null().cast(pl.Int8).alias("_has_rt"))
+        .sort(["dog_id", "race_datetime", "_has_rt", "race_id"],
+              descending=[False, False, True, False])
+        .unique(subset=["dog_id", "race_datetime"], keep="first", maintain_order=True)
+        .drop("_has_rt")
         .sort(["dog_id", "race_datetime"])
     )
 
@@ -113,16 +129,20 @@ def build_features_fast(
             closed="left",
         ).over(by_dog).fill_null(0).cast(pl.Int64).alias("runs_28d"),
 
-        # Cumulative count of prior races at track+dist (before shrinkage).
-        pl.col("_win").shift(1).over(by_dog_td)
-            .cum_count().over(by_dog_td).alias("_runs_at_td"),
+        # Cumulative count of prior races at track+dist. Position index
+        # within (dog, track, dist) — counts withdrawn races as runs.
+        pl.int_range(0, pl.len()).over(by_dog_td).alias("_runs_at_td"),
 
-        # Cumulative wins at track+dist before this race.
-        prev_win.cum_sum().over(by_dog_td).alias("wins_at_track_dist"),
+        # n_prior_runs (all runs, any track). Position index within dog.
+        pl.int_range(0, pl.len()).over(by_dog).alias("n_prior_runs"),
 
-        # n_prior_runs (all runs, any track).
-        pl.col("_win").shift(1).over(by_dog)
-            .cum_count().over(by_dog).alias("n_prior_runs"),
+        # Cumulative wins at track+dist BEFORE this race. Match the slow
+        # path's convention: null when this dog has NO prior runs at all
+        # (not just at this track+dist).
+        pl.when(pl.int_range(0, pl.len()).over(by_dog) > 0)
+          .then(prev_win.fill_null(0).cum_sum().over(by_dog_td))
+          .otherwise(None)
+          .alias("wins_at_track_dist"),
 
         # Early-pace score: rolling mean of sec1 rank in last 6 races.
         prev_sec1_rank.rolling_mean(window_size=6, min_samples=1)
@@ -204,23 +224,8 @@ def build_features_fast(
         ).alias("trainer_sr_track_180d"),
     ])
 
-    # -------------------------------------------------- race shape
-
-    # n_other_early_pace_dogs: per runner = count of OTHER runners in the
-    # same race whose early_pace_score < threshold.
-    df = df.with_columns([
-        (pl.col("early_pace_score") < scfg.early_pace_threshold)
-            .cast(pl.Int8).alias("_is_early"),
-    ])
-    df = df.with_columns([
-        (
-            pl.col("_is_early").sum().over("race_id")
-            - pl.col("_is_early")
-        ).alias("n_other_early_pace_dogs"),
-    ])
-
-    # Pace conflict: sum over pairs of early-pace dogs of 1/|trap_a - trap_b|.
-    # Computed per race once, then broadcast. Cheap on small races.
+    # Pace conflict closure used after the join (defined here so the
+    # closure can be referenced by name below).
     def _conflict_for_race(traps: list[int | None], is_early: list[int]) -> float:
         e = [t for t, m in zip(traps, is_early) if t is not None and m]
         s = 0.0
@@ -231,26 +236,8 @@ def build_features_fast(
                     s += 1.0 / d
         return s
 
-    conflicts = (
-        df.group_by("race_id", maintain_order=True)
-          .agg([
-              pl.col("trap").alias("_traps"),
-              pl.col("_is_early").alias("_isE"),
-          ])
-          .with_columns(
-              pl.struct(["_traps", "_isE"])
-                .map_elements(
-                    lambda s: _conflict_for_race(s["_traps"], s["_isE"]),
-                    return_dtype=pl.Float64,
-                )
-                .alias("pace_conflict_score")
-          )
-          .select(["race_id", "pace_conflict_score"])
-    )
-    df = df.join(conflicts, on="race_id", how="left")
-
-    # -------------------------------------------------- trap winrate
-
+    # The trap-winrate table is fit on the training slice; default to
+    # self-fitting for one-shot calls (training-set generation only).
     if trap_winrate_table is None:
         log.warning(
             "build_features_fast called without an externally-fit trap_winrate_table; "
@@ -259,23 +246,58 @@ def build_features_fast(
         trap_winrate_table = fit_trap_winrate(
             runs, min_sample=cfg.features.trap.trap_winrate_min_sample,
         )
-    df = apply_trap_winrate(df, trap_winrate_table)
 
     # -------------------------------------------------- final shape
 
-    keep = [
-        "race_id", "race_datetime", "track", "distance_m", "grade",
-        "dog_id", "trap", "weight_kg",
+    # The per-dog history features were computed on the deduplicated frame.
+    # Join them back onto the full frame keyed on (dog_id, race_datetime)
+    # so duplicate-time peers share their canonical row's history features.
+    history_cols = [
         "n_prior_runs", "days_since_last_run", "runs_28d",
         *[f"calc_time_last_{n}" for n in fcfg.last_n_windows],
         "calc_time_best_90d", "calc_time_trend_6", "calc_time_std_6",
         "wins_at_track_dist", "wins_at_track_dist_rate",
-        "early_pace_score", "n_other_early_pace_dogs", "pace_conflict_score",
+        "early_pace_score",
         "trainer_sr_30d", "trainer_sr_track_180d",
+    ]
+    history = df.select(["dog_id", "race_datetime", *history_cols])
+    out = full.join(history, on=["dog_id", "race_datetime"], how="left")
+
+    # Race-shape features (per-runner inside a race) are computed on the
+    # full frame because they depend on the field, not history.
+    out = out.with_columns([
+        (pl.col("early_pace_score") < scfg.early_pace_threshold)
+            .cast(pl.Int8).alias("_is_early"),
+    ])
+    out = out.with_columns([
+        (pl.col("_is_early").sum().over("race_id") - pl.col("_is_early"))
+            .alias("n_other_early_pace_dogs"),
+    ])
+    conflicts_full = (
+        out.group_by("race_id", maintain_order=True)
+           .agg([pl.col("trap").alias("_traps"), pl.col("_is_early").alias("_isE")])
+           .with_columns(
+               pl.struct(["_traps", "_isE"])
+                 .map_elements(
+                     lambda s: _conflict_for_race(s["_traps"], s["_isE"]),
+                     return_dtype=pl.Float64,
+                 )
+                 .alias("pace_conflict_score")
+           )
+           .select(["race_id", "pace_conflict_score"])
+    )
+    out = out.join(conflicts_full, on="race_id", how="left")
+    out = apply_trap_winrate(out, trap_winrate_table)
+
+    keep = [
+        "race_id", "race_datetime", "track", "distance_m", "grade",
+        "dog_id", "trap", "weight_kg",
+        *history_cols,
+        "n_other_early_pace_dogs", "pace_conflict_score",
         "track_dist_trap_winrate",
         "won",
     ]
-    df = df.with_columns((pl.col("_win")).alias("won"))
-    return df.select([c for c in keep if c in df.columns]).sort(
+    out = out.with_columns(pl.col("_win").alias("won"))
+    return out.select([c for c in keep if c in out.columns]).sort(
         ["race_datetime", "race_id", "trap"]
     )

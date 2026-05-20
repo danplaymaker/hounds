@@ -33,6 +33,26 @@ from greyhound.features.trap import apply_trap_winrate, fit_trap_winrate
 log = logging.getLogger(__name__)
 
 
+def _dedupe_runs_for_history(runs: pl.DataFrame) -> pl.DataFrame:
+    """Collapse same-dog same-time duplicates to one canonical row.
+
+    GBGB occasionally lists a dog twice at the same race_datetime
+    (handicap re-allocations, withdrawals). For HISTORY computation
+    those should not double-count. Prefer the row with run_time data;
+    break further ties by race_id ASC.
+    """
+    return (
+        runs
+        .with_columns(pl.col("run_time").is_not_null().cast(pl.Int8).alias("_has_rt"))
+        .sort(
+            ["dog_id", "race_datetime", "_has_rt", "race_id"],
+            descending=[False, False, True, False],
+        )
+        .unique(subset=["dog_id", "race_datetime"], keep="first", maintain_order=True)
+        .drop("_has_rt")
+    )
+
+
 def build_features(
     runs: pl.DataFrame,
     cfg: Config,
@@ -46,6 +66,10 @@ def build_features(
     one-shot training-set feature generation, pass None and we fit on the
     same frame (the typical use during model training).
     """
+    # Dedupe duplicate (dog, time) entries for history purposes. Output
+    # rows are not removed — the snapshot for any dup row is still computed
+    # against the deduplicated history.
+    history_runs = _dedupe_runs_for_history(runs)
     fcfg = FormCfg(
         last_n_windows=tuple(cfg.features.form.last_n_windows),
         best_window_days=cfg.features.form.best_window_days,
@@ -75,22 +99,22 @@ def build_features(
         per_runner: list[dict] = []
         for r in race.iter_rows(named=True):
             snap = get_form_snapshot(
-                r["dog_id"], race_dt, runs,
+                r["dog_id"], race_dt, history_runs,
                 track=track, distance_m=distance_m, cfg=fcfg,
             )
-            eps = early_pace_score(r["dog_id"], race_dt, runs)
-            style = running_style_for_dog(r["dog_id"], race_dt, runs)
+            eps = early_pace_score(r["dog_id"], race_dt, history_runs)
+            style = running_style_for_dog(r["dog_id"], race_dt, history_runs)
             trainer = trainer_strike_rate(
                 r["trainer_id"] or "",
                 race_dt,
-                runs,
+                history_runs,
                 window_days=cfg.features.connections.trainer_window_days,
                 prior_runs=cfg.features.connections.shrinkage_prior_runs,
             )
             trainer_track = trainer_strike_rate(
                 r["trainer_id"] or "",
                 race_dt,
-                runs,
+                history_runs,
                 window_days=cfg.features.connections.trainer_track_window_days,
                 track=track,
                 prior_runs=cfg.features.connections.shrinkage_prior_runs,

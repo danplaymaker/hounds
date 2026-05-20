@@ -56,6 +56,38 @@ def test_parity_on_synthetic_runs(synthetic_runs: pl.DataFrame, cfg) -> None:
         assert d < 1e-9, f"{col} disagrees by {d}"
 
 
+def test_fast_pipeline_no_leakage(synthetic_runs: pl.DataFrame, cfg) -> None:
+    """Direct leakage test: removing all races at or after race R must not
+    change R's computed features. If it does, the fast path is peeking
+    at the future."""
+    full = build_features_fast(synthetic_runs, cfg)
+    # Re-run with only the first 4 races (i.e. simulate that R04+ haven't
+    # happened yet) and check R03's features are identical.
+    target_race = "R03"
+    target_dt = synthetic_runs.filter(pl.col("race_id") == target_race)["race_datetime"][0]
+    truncated = synthetic_runs.filter(pl.col("race_datetime") < target_dt)
+    # Add only the target race itself back in (so the pipeline has rows
+    # at race R03's exact time to compute features for).
+    target_rows = synthetic_runs.filter(pl.col("race_id") == target_race)
+    minimal = pl.concat([truncated, target_rows])
+    minimal_out = build_features_fast(minimal, cfg)
+
+    a = full.filter(pl.col("race_id") == target_race).sort("dog_id")
+    b = minimal_out.filter(pl.col("race_id") == target_race).sort("dog_id")
+    for col in [
+        "n_prior_runs", "calc_time_last_1", "calc_time_last_3",
+        "calc_time_best_90d", "wins_at_track_dist", "days_since_last_run",
+    ]:
+        diff = (
+            a[col].cast(pl.Float64).fill_null(-9999.0)
+            - b[col].cast(pl.Float64).fill_null(-9999.0)
+        ).abs().max()
+        assert diff < 1e-9, (
+            f"Leakage: {col} for race {target_race} changed when future "
+            f"races were removed (max diff {diff})"
+        )
+
+
 def test_fast_pipeline_is_faster(synthetic_runs: pl.DataFrame, cfg) -> None:
     """Fast path should be at least 5x faster than the slow path. This is
     a soft check — the absolute numbers don't matter, only the ordering."""
