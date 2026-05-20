@@ -34,7 +34,7 @@ NON_FEATURE_COLS: frozenset[str] = frozenset({
 })
 
 
-def select_feature_cols(df: "pl.DataFrame") -> list[str]:
+def select_feature_cols(df: pl.DataFrame) -> list[str]:
     """Numeric columns that aren't IDs / labels / post-race state."""
     return [
         c for c in df.columns
