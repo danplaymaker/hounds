@@ -25,6 +25,9 @@ data/interim/
 data/processed/
 data/live/
 
+# Runtime logs
+logs/
+
 # Model artifacts (keep dir, not contents)
 models/artifacts/*
 !models/artifacts/.gitkeep

@@ -84,6 +84,11 @@ tracks:
     aliases:   ["Sheffield", "Owlerton"]
     distances_m: [280, 500, 660]
 
+  - canonical: sunderland
+    display:   "Sunderland"
+    aliases:   ["Sunderland"]
+    distances_m: [285, 450, 631]
+
   - canonical: suffolk_downs
     display:   "Suffolk Downs"
     aliases:   ["Suffolk Downs", "Mildenhall"]

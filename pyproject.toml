@@ -81,3 +81,6 @@ markers = [
   "slow: integration / network tests",
   "leakage: feature leakage tests (must always pass)",
 ]
+filterwarnings = [
+  "ignore:Sortedness of columns cannot be checked.*:UserWarning",
+]
