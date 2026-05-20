@@ -1,0 +1,96 @@
+# Loaded via pydantic-settings; see src/greyhound/data/schemas.py
+project:
+  name: greyhound-value
+  random_seed: 42
+  timezone: Europe/London
+
+paths:
+  raw_dir:        data/raw
+  interim_dir:    data/interim
+  processed_dir:  data/processed
+  models_dir:     models/artifacts
+  reports_dir:    reports
+  live_dir:       data/live
+
+ingest:
+  gbgb:
+    start_date: "2024-05-20"     # ~24 months before 2026-05-20
+    end_date:   null             # null => yesterday
+    base_url:   "https://api.gbgb.org.uk"   # placeholder; confirm in A1.1
+    cache_dir:  data/raw/gbgb
+    request_delay_seconds: 2.0
+    max_concurrency: 1
+    backoff:
+      max_attempts: 5
+      initial_seconds: 2.0
+      multiplier: 2.0
+    user_agent: "greyhound-value-research/0.0.1 (contact: dan@playmaker.studio)"
+    respect_robots_txt: true
+  betfair_bsp:
+    tier: promo
+    sport: greyhound
+    country: GB
+    cache_dir: data/raw/betfair_bsp
+
+join:
+  time_tolerance_seconds: 120
+  min_match_rate_per_track: 0.95
+
+features:
+  form:
+    last_n_windows: [1, 3, 6]
+    best_window_days: 90
+    trend_window: 6
+    recent_run_window_days: 28
+    bayesian_shrinkage_prior_runs: 20
+  trap:
+    trap_winrate_min_sample: 50
+  shape:
+    early_pace_threshold: 2.5
+  connections:
+    trainer_window_days: 30
+    trainer_track_window_days: 180
+    shrinkage_prior_runs: 50
+
+splits:
+  train_min_months: 12
+  val_months: 1
+  test_months: 1
+  step_months: 1
+
+model:
+  type: lgbm_ranker
+  lgbm:
+    objective: lambdarank
+    metric: ndcg
+    learning_rate: 0.05
+    num_leaves: 63
+    min_data_in_leaf: 200
+    feature_fraction: 0.9
+    bagging_fraction: 0.9
+    bagging_freq: 5
+    num_boost_round: 2000
+    early_stopping_rounds: 100
+  softmax_temperature_init: 1.0
+  calibration:
+    method: isotonic
+    holdout_fraction: 0.2
+
+betting:
+  edge_threshold: 0.10
+  staking:
+    method: quarter_kelly
+    bankroll: 1000.0
+    max_stake_pct: 0.02
+    min_stake_gbp: 2.0
+    max_stake_gbp: 50.0
+  commission_rate: 0.05
+  reality_check: true
+
+paper_trade:
+  snapshot_minutes_before_off: [20, 15, 10, 5]
+  log_path: data/live/paper_bets.parquet
+
+logging:
+  level: INFO
+  json: false

@@ -1,0 +1,108 @@
+# Canonical track metadata for the 18 GBGB-licensed UK tracks.
+# Used to normalise track names across GBGB and Betfair sources,
+# and to attach default distance/going adjustments.
+#
+# Canonical names are lowercase, hyphen-free, single-word where possible.
+# Aliases capture observed variants from each source.
+#
+# Going adjustments are placeholder; refine empirically from race data
+# (median run-time delta per going band) once A1 produces enough rows.
+
+tracks:
+  - canonical: central_park
+    display:   "Central Park"
+    aliases:   ["Central Park", "Central Park (Sittingbourne)", "Sittingbourne"]
+    distances_m: [264, 480, 642, 714]
+
+  - canonical: crayford
+    display:   "Crayford"
+    aliases:   ["Crayford", "Crayford & Bexleyheath"]
+    distances_m: [380, 540, 714, 874]
+
+  - canonical: doncaster
+    display:   "Doncaster"
+    aliases:   ["Doncaster"]
+    distances_m: [273, 451, 642]
+
+  - canonical: harlow
+    display:   "Harlow"
+    aliases:   ["Harlow"]
+    distances_m: [238, 415, 591]
+
+  - canonical: henlow
+    display:   "Henlow"
+    aliases:   ["Henlow"]
+    distances_m: [277, 460, 645]
+
+  - canonical: hove
+    display:   "Hove"
+    aliases:   ["Hove", "Brighton & Hove"]
+    distances_m: [285, 500, 695]
+
+  - canonical: kinsley
+    display:   "Kinsley"
+    aliases:   ["Kinsley"]
+    distances_m: [302, 462, 639]
+
+  - canonical: monmore
+    display:   "Monmore"
+    aliases:   ["Monmore", "Monmore Green"]
+    distances_m: [264, 480, 630]
+
+  - canonical: newcastle
+    display:   "Newcastle"
+    aliases:   ["Newcastle"]
+    distances_m: [305, 480, 670]
+
+  - canonical: nottingham
+    display:   "Nottingham"
+    aliases:   ["Nottingham", "Colwick Park"]
+    distances_m: [305, 500, 670]
+
+  - canonical: oxford
+    display:   "Oxford"
+    aliases:   ["Oxford"]
+    distances_m: [250, 450, 645]
+
+  - canonical: pelaw_grange
+    display:   "Pelaw Grange"
+    aliases:   ["Pelaw Grange"]
+    distances_m: [285, 437, 627]
+
+  - canonical: perry_barr
+    display:   "Perry Barr"
+    aliases:   ["Perry Barr", "Birmingham"]
+    distances_m: [275, 480, 660]
+
+  - canonical: romford
+    display:   "Romford"
+    aliases:   ["Romford"]
+    distances_m: [225, 400, 575, 750]
+
+  - canonical: sheffield
+    display:   "Sheffield"
+    aliases:   ["Sheffield", "Owlerton"]
+    distances_m: [280, 500, 660]
+
+  - canonical: suffolk_downs
+    display:   "Suffolk Downs"
+    aliases:   ["Suffolk Downs", "Mildenhall"]
+    distances_m: [277, 462, 642]
+
+  - canonical: swindon
+    display:   "Swindon"
+    aliases:   ["Swindon"]
+    distances_m: [264, 480, 685]
+
+  - canonical: towcester
+    display:   "Towcester"
+    aliases:   ["Towcester"]
+    distances_m: [270, 500, 712]
+
+# Going band → multiplicative time adjustment (seconds added).
+# Negative = faster going.  Refine empirically in A1 once data lands.
+going_adjustments:
+  fast:    -0.25
+  normal:   0.00
+  slow:    +0.20
+  heavy:   +0.45

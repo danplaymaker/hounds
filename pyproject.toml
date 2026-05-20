@@ -1,0 +1,83 @@
+[project]
+name = "greyhound-value"
+version = "0.0.1"
+description = "UK greyhound value-betting model (Phase A: fundamentals vs BSP)"
+requires-python = ">=3.11"
+readme = "README.md"
+
+dependencies = [
+  "polars>=1.0",
+  "pyarrow>=15",
+  "pandas>=2.2",
+  "numpy>=1.26",
+  "scikit-learn>=1.4",
+  "lightgbm>=4.3",
+  "scipy>=1.12",
+  "httpx>=0.27",
+  "selectolax>=0.3.21",
+  "tenacity>=8.2",
+  "betfairlightweight>=2.20",
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "pyyaml>=6.0",
+  "python-dateutil>=2.9",
+  "tqdm>=4.66",
+  "matplotlib>=3.8",
+  "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "pytest-xdist>=3.5",
+  "hypothesis>=6.100",
+  "ruff>=0.4",
+  "mypy>=1.10",
+  "ipykernel>=6.29",
+  "jupyterlab>=4.1",
+  "nbstripout>=0.7",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "PL", "RUF"]
+ignore = [
+  "PLR0913",  # many feature funcs have many args
+  "PLR0915",  # main()s and pipeline loops are inherently long
+  "PLR0912",  # ditto
+  "PLR2004",  # magic numbers are fine in this domain
+  "PLC0415",  # CLI main() functions defer argparse imports intentionally
+  "BLE001",   # broad excepts in batch parsers are intentional
+  "B007",     # unused loop variables
+  "RUF001",   # ambiguous unicode glyphs (we test them explicitly)
+  "SIM108",   # ternary readability is in the eye of the beholder
+  "B905",     # zip(strict=) noise, lengths are guaranteed by polars columns
+  "E501",     # long lines in narrative comments / CLI mains
+  "UP015",    # explicit open() modes are clearer
+  "RUF012",   # mutable default factory annotation noise
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["notebooks/", "tests/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "slow: integration / network tests",
+  "leakage: feature leakage tests (must always pass)",
+]

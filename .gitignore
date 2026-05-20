@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+*.cover
+
+# Data (gitignored per brief — only code is versioned)
+data/raw/
+data/interim/
+data/processed/
+data/live/
+
+# Model artifacts (keep dir, not contents)
+models/artifacts/*
+!models/artifacts/.gitkeep
+
+# Reports
+reports/*
+!reports/.gitkeep
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
