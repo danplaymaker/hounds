@@ -38,17 +38,22 @@ class FormCfg:
 # ------------------------------------------------------- going adjustment
 
 def calculated_time(run_time: float | None, going: float | None) -> float | None:
-    """Return going-adjusted time. `going` is the published going correction
-    in seconds (positive = slow track). Calculated time = run_time - going.
+    """Return going-adjusted (a.k.a. "calculated") time.
 
-    A faster (negative-going) track means published times are quick, so
-    subtracting going gives a normalised "neutral going" time.
+    GBGB publishes `raceGoing` as hundredths of a second to ADD to the raw
+    run time to produce a comparable adjusted time on a neutral track
+    (positive going = slow track penalty). We follow that convention:
+
+        calc_time = run_time + going_seconds
+
+    GBGB's own `resultAdjustedTime` field equals this sum, so calculated
+    times here are directly comparable to that.
     """
     if run_time is None or going is None:
         return None
     if np.isnan(run_time) or np.isnan(going):
         return None
-    return float(run_time) - float(going)
+    return float(run_time) + float(going)
 
 
 # ----------------------------------------------------- the leakage primitive

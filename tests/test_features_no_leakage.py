@@ -140,8 +140,10 @@ def test_runs_28d(synthetic_runs: pl.DataFrame) -> None:
 # 9.  Calculated time helper.
 
 def test_calculated_time_with_going() -> None:
-    assert calculated_time(28.50, 0.20) == pytest.approx(28.30)
-    assert calculated_time(28.50, -0.20) == pytest.approx(28.70)
+    # GBGB convention: positive going (slow track) ADDS to the raw run time
+    # to produce a comparable "adjusted" time on a neutral track.
+    assert calculated_time(28.50, 0.20) == pytest.approx(28.70)
+    assert calculated_time(28.50, -0.20) == pytest.approx(28.30)
     assert calculated_time(None, 0.0) is None
     assert calculated_time(28.50, None) is None
 

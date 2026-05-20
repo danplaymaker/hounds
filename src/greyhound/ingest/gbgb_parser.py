@@ -1,111 +1,177 @@
-"""GBGB HTML → typed rows (A1.2).
+"""GBGB JSON → canonical Run rows (A1.2).
 
-Pure function. No I/O inside `parse_race_html`. The CLI wraps it with file
-reads for batch runs.
+Pure functions. No I/O inside `parse_meeting_json`. The CLI wraps it with
+file reads to convert a cache directory of meeting JSON into a Parquet
+frame conforming to RUN_SCHEMA.
 
-The selectors below are placeholders shaped to GBGB's typical results
-layout — finalise once a sample page is captured.
+GBGB shape (observed from /api/results/meeting/{id}):
+
+  list[ Meeting ]                 # always length 1 in practice
+    Meeting:
+      meetingDate     "DD/MM/YYYY"
+      meetingId       int
+      trackName       "Crayford"
+      races: list[ Race ]
+        Race:
+          raceId          int
+          raceDate        "DD/MM/YYYY"   # duplicates meetingDate
+          raceTime        "HH:MM:SS"     # local time (Europe/London)
+          raceClass       "A4"
+          raceDistance    float (metres)
+          raceHandicap    bool
+          raceGoing       str (hundredths of a second to add → going_s = float/100)
+          traps: list[ Trap ]
+            Trap:
+              trapNumber             str  (cast to int)
+              trapHandicap           int|None
+              dogId                  int  (primary key per BRIEF §6)
+              dogName                str
+              trainerName            str  (no trainerId in payload — slugify)
+              SP                     str  "13/8" or "Evs" or empty
+              resultPriceNumerator   int|None
+              resultPriceDenominator int|None
+              resultPosition         int|None   (null = withdrew/DNF)
+              resultRunTime          str|None   (seconds, e.g. "23.58")
+              resultSectionalTime    str|None   (seconds, e.g. "03.63")
+              resultDogWeight        str|None   (kg, e.g. "23.4")
+              resultAdjustedTime     str|None   (run + going/100)
+              resultComment          str|None
+
+Race times are local (Europe/London). We convert to UTC using zoneinfo
+since BSP timestamps will be UTC too.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import polars as pl
-from selectolax.parser import HTMLParser
 
 from greyhound.data.identity import bf_safe_name, canonical_track
 from greyhound.data.schemas import RUN_SCHEMA, load_config
 
 log = logging.getLogger(__name__)
 
+_UK_TZ = ZoneInfo("Europe/London")
+_UTC = ZoneInfo("UTC")
 
-def parse_race_html(html: str, *, tracks_yaml: str | Path = "config/tracks.yaml") -> list[dict[str, Any]]:
-    """Parse one race results HTML page → list of runner dicts.
 
-    Returns rows conforming to RUN_SCHEMA (ish — Polars cast happens later).
-    Returns empty list on a malformed/empty page, with a warning logged.
+def parse_meeting_json(
+    payload: list[dict] | dict,
+    *,
+    tracks_yaml: str | Path = "config/tracks.yaml",
+) -> list[dict[str, Any]]:
+    """Convert a /api/results/meeting/{id} payload into RUN_SCHEMA rows.
+
+    Tolerates the (theoretical) case where GBGB returns a bare dict
+    instead of a list. Returns [] on malformed / empty input.
     """
-    tree = HTMLParser(html)
-
-    race_id = _first_attr(tree, "meta[name=race-id]", "content") or _first_text(tree, ".race-id")
-    if not race_id:
-        log.warning("No race_id in HTML — skipping page")
-        return []
-
-    track_raw = _first_text(tree, ".race-track") or ""
-    track = canonical_track(track_raw, tracks_yaml=tracks_yaml)
-    distance_m_s = _first_text(tree, ".race-distance") or ""
-    distance_m = int(re.sub(r"[^0-9]", "", distance_m_s)) if distance_m_s else 0
-    grade = _first_text(tree, ".race-grade")
-    going_s = _first_text(tree, ".race-going") or ""
-    going = float(re.sub(r"[^0-9.+\-]", "", going_s)) if going_s else None
-    race_dt = _parse_dt(_first_text(tree, ".race-datetime") or "")
-
+    meetings = payload if isinstance(payload, list) else [payload]
     rows: list[dict[str, Any]] = []
-    for row in tree.css(".runner-row"):
-        dog_id = (row.attributes.get("data-dog-id") or "").strip()
-        dog_name = _first_text(row, ".dog-name") or ""
-        trap_s = _first_text(row, ".trap") or "0"
-        try:
-            trap = int(re.sub(r"[^0-9]", "", trap_s))
-        except ValueError:
-            trap = 0
-        finish_s = _first_text(row, ".finish-position") or ""
-        finish = int(re.sub(r"[^0-9]", "", finish_s)) if finish_s.strip() else None
-        sp_s = _first_text(row, ".sp") or ""
-        sp = _parse_decimal_odds(sp_s)
-        run_time = _to_float(_first_text(row, ".run-time"))
-        sectional_1 = _to_float(_first_text(row, ".sectional-1"))
-        weight_kg = _to_float(_first_text(row, ".weight-kg"))
-        trainer_id = (row.attributes.get("data-trainer-id") or "").strip()
-        trainer_name = _first_text(row, ".trainer-name") or ""
-        comment = _first_text(row, ".comment") or ""
+    for meeting in meetings:
+        if not isinstance(meeting, dict):
+            continue
+        track_raw = meeting.get("trackName") or ""
+        track = canonical_track(track_raw, tracks_yaml=tracks_yaml)
+        if track is None:
+            log.warning("Unknown track %r — skipping meeting %s", track_raw, meeting.get("meetingId"))
+            continue
+        meeting_date_str = meeting.get("meetingDate") or ""
 
-        rows.append({
-            "race_id": race_id,
-            "race_datetime": race_dt,
-            "track": track,
-            "distance_m": distance_m,
-            "grade": grade,
-            "going": going,
-            "dog_id": dog_id,
-            "dog_name": dog_name,
-            "trap": trap,
-            "sp": sp,
-            "finish_position": finish,
-            "run_time": run_time,
-            "sectional_1": sectional_1,
-            "weight_kg": weight_kg,
-            "trainer_id": trainer_id,
-            "trainer_name": trainer_name,
-            "comment": comment,
-            "bf_safe_name": bf_safe_name(dog_name),
-        })
+        for race in meeting.get("races", []) or []:
+            race_id = race.get("raceId")
+            if race_id is None:
+                continue
+            race_dt = _combine_uk_dt(
+                race.get("raceDate") or meeting_date_str,
+                race.get("raceTime") or "",
+            )
+            if race_dt is None:
+                log.warning("Bad datetime on race %s — skipping", race_id)
+                continue
+
+            distance_m = int(race.get("raceDistance") or 0)
+            grade = race.get("raceClass")
+            going_s = _going_to_seconds(race.get("raceGoing"))
+
+            for trap in race.get("traps", []) or []:
+                dog_id_raw = trap.get("dogId")
+                if dog_id_raw is None:
+                    continue  # No dog ID, no row — BRIEF §6.
+                dog_id = str(dog_id_raw)
+                dog_name = trap.get("dogName") or ""
+                trap_num = _to_int(trap.get("trapNumber"))
+                sp = _decimal_sp(trap)
+                finish = trap.get("resultPosition")
+                run_time = _to_float(trap.get("resultRunTime"))
+                sec1 = _to_float(trap.get("resultSectionalTime"))
+                weight = _to_float(trap.get("resultDogWeight"))
+                trainer_name = (trap.get("trainerName") or "").strip()
+                trainer_id = _slug_trainer(trainer_name)
+                comment = trap.get("resultComment") or ""
+
+                rows.append({
+                    "race_id": str(race_id),
+                    "race_datetime": race_dt,
+                    "track": track,
+                    "distance_m": distance_m,
+                    "grade": grade,
+                    "going": going_s,
+                    "dog_id": dog_id,
+                    "dog_name": dog_name,
+                    "trap": trap_num,
+                    "sp": sp,
+                    "finish_position": finish,
+                    "run_time": run_time,
+                    "sectional_1": sec1,
+                    "weight_kg": weight,
+                    "trainer_id": trainer_id,
+                    "trainer_name": trainer_name,
+                    "comment": comment,
+                    "bf_safe_name": bf_safe_name(dog_name),
+                })
 
     return rows
 
 
-def _first_text(tree, selector: str) -> str | None:
-    node = tree.css_first(selector)
-    if node is None:
+# -------------------------------------------------------------- helpers
+
+_TRAINER_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slug_trainer(name: str) -> str:
+    """Slug a trainer name. GBGB has no trainer ID; this is the best we can do.
+    Two trainers with identical normalised names would collide, but in
+    practice the licensed-trainer namespace is small and conflict-free.
+    """
+    if not name:
+        return ""
+    return _TRAINER_SLUG_RE.sub("_", name.lower()).strip("_")
+
+
+def _to_int(v: Any) -> int | None:
+    if v is None:
         return None
-    return (node.text() or "").strip() or None
-
-
-def _first_attr(tree, selector: str, attr: str) -> str | None:
-    node = tree.css_first(selector)
-    if node is None:
+    try:
+        s = str(v).strip()
+        if not s:
+            return None
+        return int(re.sub(r"[^0-9-]", "", s)) if re.search(r"[^0-9-]", s) else int(s)
+    except (ValueError, TypeError):
         return None
-    return node.attributes.get(attr)
 
 
-def _to_float(s: str | None) -> float | None:
-    if s is None:
+def _to_float(v: Any) -> float | None:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
         return None
     try:
         return float(s)
@@ -113,46 +179,104 @@ def _to_float(s: str | None) -> float | None:
         return None
 
 
-def _parse_decimal_odds(s: str) -> float | None:
-    """Accept '5/2', '5-2', or '3.50'. Returns decimal-odds float or None."""
-    s = (s or "").strip()
+def _going_to_seconds(raw: Any) -> float | None:
+    """GBGB publishes going in hundredths of a second to ADD to the raw
+    run time to produce a comparable adjusted time. So `going_s` here is
+    a small positive number on a slow track.
+
+    Empty / non-numeric → None.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
     if not s:
         return None
-    m = re.match(r"^(\d+(?:\.\d+)?)[/\-](\d+(?:\.\d+)?)$", s)
+    # Strip any '+' sign GBGB might prepend.
+    s = s.lstrip("+")
+    try:
+        return float(s) / 100.0
+    except ValueError:
+        return None
+
+
+def _decimal_sp(trap: dict) -> float | None:
+    """Prefer the numerator/denominator pair (always present when SP is set);
+    fall back to parsing the SP string ('Evs', '5/2', '11/10F', etc.).
+    """
+    num = trap.get("resultPriceNumerator")
+    den = trap.get("resultPriceDenominator")
+    if num is not None and den is not None and den != 0:
+        return float(num) / float(den) + 1.0
+
+    s = (trap.get("SP") or "").strip()
+    if not s:
+        return None
+    # "Evs" = even money = 2.0 decimal
+    if s.lower().startswith("ev"):
+        return 2.0
+    # Strip favourite markers like 'F', 'JF', 'CF'
+    s = re.sub(r"[A-Za-z]+$", "", s).strip()
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)$", s)
     if m:
-        num, den = float(m.group(1)), float(m.group(2))
-        return num / den + 1.0 if den else None
+        n, d = float(m.group(1)), float(m.group(2))
+        return n / d + 1.0 if d else None
     try:
         return float(s)
     except ValueError:
         return None
 
 
-def _parse_dt(s: str) -> datetime | None:
-    if not s:
+def _combine_uk_dt(date_str: str, time_str: str) -> datetime | None:
+    """Combine GBGB's "DD/MM/YYYY" + "HH:MM:SS" (local UK time) into UTC."""
+    if not date_str:
         return None
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M"):
+    try:
+        d_part = datetime.strptime(date_str.strip(), "%d/%m/%Y").date()
+    except ValueError:
+        return None
+    if not time_str:
+        time_str = "00:00:00"
+    for fmt in ("%H:%M:%S", "%H:%M"):
         try:
-            return datetime.strptime(s, fmt).replace(tzinfo=UTC)
+            t_part = datetime.strptime(time_str.strip(), fmt).time()
+            break
         except ValueError:
-            continue
-    return None
+            t_part = None
+    if t_part is None:
+        return None
+    local = datetime.combine(d_part, t_part).replace(tzinfo=_UK_TZ)
+    return local.astimezone(_UTC)
 
 
-def parse_all_cached(cache_dir: Path, tracks_yaml: str | Path = "config/tracks.yaml") -> pl.DataFrame:
+# ------------------------------------------------------- batch ingestion
+
+def parse_all_cached(
+    cache_dir: Path,
+    *,
+    tracks_yaml: str | Path = "config/tracks.yaml",
+) -> pl.DataFrame:
+    """Walk `<cache_dir>/meeting/*.json` and concatenate parsed rows."""
+    meeting_dir = cache_dir / "meeting"
+    if not meeting_dir.exists():
+        log.warning("No meetings cache at %s", meeting_dir)
+        return pl.DataFrame(schema=RUN_SCHEMA)
+
     rows: list[dict[str, Any]] = []
-    for html_path in cache_dir.rglob("*.html"):
-        if html_path.name.startswith("_"):
-            continue
+    for path in sorted(meeting_dir.glob("*.json")):
         try:
-            html = html_path.read_text(encoding="utf-8")
-        except OSError:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            log.warning("Skip %s: %s", path, e)
             continue
-        rows.extend(parse_race_html(html, tracks_yaml=tracks_yaml))
+        rows.extend(parse_meeting_json(payload, tracks_yaml=tracks_yaml))
 
     if not rows:
         return pl.DataFrame(schema=RUN_SCHEMA)
-    return pl.DataFrame(rows).cast({k: v for k, v in RUN_SCHEMA.items() if k in rows[0]})
+
+    df = pl.DataFrame(rows)
+    # Cast to canonical schema (subset of cols present).
+    keep = [c for c in RUN_SCHEMA if c in df.columns]
+    return df.select(keep).cast({c: RUN_SCHEMA[c] for c in keep})
 
 
 def main() -> None:
