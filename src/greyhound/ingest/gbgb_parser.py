@@ -61,6 +61,11 @@ log = logging.getLogger(__name__)
 _UK_TZ = ZoneInfo("Europe/London")
 _UTC = ZoneInfo("UTC")
 
+# Tracks that GBGB reports but Betfair has no UK greyhound markets for.
+# These get dropped silently rather than logged as "unknown" — we know
+# about them and have no use for them in Phase A.
+_SKIP_QUIETLY: set[str] = {"Yarmouth", "Valley", "Henlow"}
+
 
 def parse_meeting_json(
     payload: list[dict] | dict,
@@ -80,7 +85,9 @@ def parse_meeting_json(
         track_raw = meeting.get("trackName") or ""
         track = canonical_track(track_raw, tracks_yaml=tracks_yaml)
         if track is None:
-            log.warning("Unknown track %r — skipping meeting %s", track_raw, meeting.get("meetingId"))
+            if track_raw not in _SKIP_QUIETLY:
+                log.warning("Unknown track %r — skipping meeting %s",
+                            track_raw, meeting.get("meetingId"))
             continue
         meeting_date_str = meeting.get("meetingDate") or ""
 
