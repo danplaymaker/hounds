@@ -150,12 +150,18 @@ def build_features(
 
 def main() -> None:
     import argparse
+
+    from greyhound.features.pipeline_fast import build_features_fast
     logging.basicConfig(level="INFO", format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config/default.yaml")
     ap.add_argument(
         "--runs", default=None,
         help="Path to races_with_market.parquet (default: derived from config)"
+    )
+    ap.add_argument(
+        "--slow", action="store_true",
+        help="Use the reference (row-by-row) pipeline instead of the vectorised one.",
     )
     args = ap.parse_args()
 
@@ -164,7 +170,9 @@ def main() -> None:
     if not runs_path.exists():
         raise SystemExit(f"Runs file not found: {runs_path} — run `make ingest` first.")
     runs = pl.read_parquet(runs_path)
-    features = build_features(runs, cfg)
+    builder = build_features if args.slow else build_features_fast
+    log.info("Building features with %s", builder.__name__)
+    features = builder(runs, cfg)
     out = cfg.paths.processed_dir / "features.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)
     features.write_parquet(out)

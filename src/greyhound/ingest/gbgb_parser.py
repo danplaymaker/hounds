@@ -64,7 +64,7 @@ _UTC = ZoneInfo("UTC")
 # Tracks that GBGB reports but Betfair has no UK greyhound markets for.
 # These get dropped silently rather than logged as "unknown" — we know
 # about them and have no use for them in Phase A.
-_SKIP_QUIETLY: set[str] = {"Yarmouth", "Valley", "Henlow", "Star Pelaw"}
+_SKIP_QUIETLY: set[str] = {"Yarmouth", "Valley", "Henlow", "Star Pelaw", "Dunstall Park"}
 
 
 def parse_meeting_json(

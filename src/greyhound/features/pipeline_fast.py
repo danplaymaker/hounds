@@ -289,15 +289,23 @@ def build_features_fast(
     out = out.join(conflicts_full, on="race_id", how="left")
     out = apply_trap_winrate(out, trap_winrate_table)
 
+    # Pass-through columns from the input if they're present. ONLY
+    # things that are known *before* the off (bsp is the pre-off SP,
+    # market_id is metadata). NEVER finish_position or run_time — those
+    # are the targets / post-race outcomes.
+    passthrough = ["bsp", "market_id"]
     keep = [
         "race_id", "race_datetime", "track", "distance_m", "grade",
         "dog_id", "trap", "weight_kg",
         *history_cols,
         "n_other_early_pace_dogs", "pace_conflict_score",
         "track_dist_trap_winrate",
+        *[c for c in passthrough if c in out.columns],
         "won",
     ]
-    out = out.with_columns(pl.col("_win").alias("won"))
+    # `won` must be a clean 0/1 — withdrawn dogs (null finish_position)
+    # are NOT winners. fill_null(0) before exposing.
+    out = out.with_columns(pl.col("_win").fill_null(0).cast(pl.Int8).alias("won"))
     return out.select([c for c in keep if c in out.columns]).sort(
         ["race_datetime", "race_id", "trap"]
     )
