@@ -23,7 +23,7 @@ import polars as pl
 from dateutil.relativedelta import relativedelta
 
 from greyhound.betting.edge import compute_edge
-from greyhound.betting.staking import StakingPolicy
+from greyhound.betting.staking import FlatStakingPolicy, StakingPolicy
 from greyhound.data.schemas import Config, load_config
 from greyhound.models.calibration import (
     IsotonicCalibrator,
@@ -99,12 +99,20 @@ def run_walk_forward(
 
         # Fresh bankroll per fold.
         bankroll = starting_bankroll
-        policy = StakingPolicy(
-            bankroll=bankroll,
-            max_stake_pct=cfg.betting.staking.max_stake_pct,
-            min_stake_gbp=cfg.betting.staking.min_stake_gbp,
-            max_stake_gbp=cfg.betting.staking.max_stake_gbp,
-        )
+        if cfg.betting.staking.method == "flat":
+            policy = FlatStakingPolicy(
+                starting_bankroll=starting_bankroll,
+                flat_pct=cfg.betting.staking.flat_stake_pct,
+                min_stake_gbp=cfg.betting.staking.min_stake_gbp,
+                max_stake_gbp=cfg.betting.staking.max_stake_gbp,
+            )
+        else:
+            policy = StakingPolicy(
+                bankroll=bankroll,
+                max_stake_pct=cfg.betting.staking.max_stake_pct,
+                min_stake_gbp=cfg.betting.staking.min_stake_gbp,
+                max_stake_gbp=cfg.betting.staking.max_stake_gbp,
+            )
 
         feature_cols = select_feature_cols(feat)
 
@@ -130,7 +138,26 @@ def run_walk_forward(
         valid_mask = np.isfinite(bsp) & (bsp > 1.0)
         edges = compute_edge(test_probs, np.where(valid_mask, bsp, np.nan))
 
+        # Selection: who is allowed to be a bet candidate?
+        if cfg.betting.selection == "stand_out":
+            # ONE candidate per race: the runner with the highest model_prob.
+            # Selection ignores BSP entirely (per the user's strategy:
+            # "forget BSP when making a selection"). BSP gates afterwards
+            # via the edge_threshold below.
+            race_ids = test["race_id"].to_numpy()
+            # Per-race top-1 prob and gap-to-2nd
+            top_mask, gap = _race_top_with_gap(test_probs, race_ids)
+            candidate_mask = (
+                top_mask
+                & (test_probs >= cfg.betting.standout_min_prob)
+                & (gap >= cfg.betting.standout_min_gap)
+            )
+        else:
+            candidate_mask = np.ones(len(test_probs), dtype=bool)
+
         for i, row in enumerate(test.iter_rows(named=True)):
+            if not candidate_mask[i]:
+                continue
             if not valid_mask[i] or not np.isfinite(edges[i]):
                 continue
             edge = float(edges[i])
@@ -146,7 +173,9 @@ def run_walk_forward(
             commission = cfg.betting.commission_rate * max(gross, 0.0)
             pnl = gross - commission
             bankroll += pnl
-            policy.bankroll = bankroll
+            # Kelly policy uses live bankroll; flat policy ignores it.
+            if isinstance(policy, StakingPolicy):
+                policy.bankroll = bankroll
             bets_out.append({
                 "race_id": row["race_id"],
                 "race_datetime": row["race_datetime"],
@@ -173,6 +202,42 @@ def run_walk_forward(
 
     summary = _summarise(bets, cfg.betting.commission_rate)
     return BacktestResult(bets=bets, summary=summary)
+
+
+def _race_top_with_gap(
+    probs: np.ndarray, race_ids: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """For each row, return (is_top_in_race, gap_to_2nd_in_race).
+
+    Ties broken arbitrarily by argmax (first occurrence). gap is the
+    difference between this row's prob and the 2nd-best in its race, or
+    +inf for top rows in single-runner races.
+    """
+    n = len(probs)
+    top_mask = np.zeros(n, dtype=bool)
+    gap = np.zeros(n, dtype=np.float64)
+    # Group by race
+    sort_idx = np.argsort(race_ids, kind="stable")
+    grouped_ids = race_ids[sort_idx]
+    grouped_probs = probs[sort_idx]
+    # Find race boundaries
+    change = np.concatenate(([True], grouped_ids[1:] != grouped_ids[:-1]))
+    starts = np.flatnonzero(change)
+    ends = np.concatenate((starts[1:], [n]))
+    for s, e in zip(starts, ends):
+        race_probs = grouped_probs[s:e]
+        if race_probs.size == 0:
+            continue
+        local_top = int(np.argmax(race_probs))
+        top_idx = sort_idx[s + local_top]
+        top_mask[top_idx] = True
+        if race_probs.size >= 2:
+            sorted_desc = np.sort(race_probs)[::-1]
+            g = float(sorted_desc[0] - sorted_desc[1])
+        else:
+            g = float("inf")
+        gap[top_idx] = g
+    return top_mask, gap
 
 
 def _fit_calibrator(probs: np.ndarray, y: np.ndarray, method: str):

@@ -138,10 +138,14 @@ class StakingCfg(BaseModel):
     max_stake_pct: float = 0.02
     min_stake_gbp: float = 2.0
     max_stake_gbp: float = 50.0
+    flat_stake_pct: float = 0.02   # for method="flat": fraction of starting bankroll
 
 
 class BettingCfg(BaseModel):
+    selection: Literal["edge_threshold", "stand_out"] = "edge_threshold"
     edge_threshold: float = 0.10
+    standout_min_prob: float = 0.20       # for stand_out: min model_prob for the race's top pick
+    standout_min_gap: float = 0.05        # for stand_out: min gap to 2nd-best in the race
     staking: StakingCfg = StakingCfg()
     commission_rate: float = 0.05
     reality_check: bool = True

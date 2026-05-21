@@ -77,13 +77,17 @@ model:
     holdout_fraction: 0.2
 
 betting:
-  edge_threshold: 0.10
+  selection: stand_out          # 'stand_out' = one pick per race by model_prob, or 'edge_threshold'
+  edge_threshold: 0.10          # required edge against BSP for the pick to fire
+  standout_min_prob: 0.20       # the pick must clear this absolute model_prob
+  standout_min_gap: 0.05        # and beat the 2nd-best in the race by this much
   staking:
-    method: quarter_kelly
-    bankroll: 1000.0
+    method: flat                # flat 2 units of a 100-unit bankroll
+    bankroll: 100.0
+    flat_stake_pct: 0.02
     max_stake_pct: 0.02
     min_stake_gbp: 2.0
-    max_stake_gbp: 50.0
+    max_stake_gbp: 1000000.0
   commission_rate: 0.05
   reality_check: true
 

@@ -1,6 +1,10 @@
 """Staking (A4.2).
 
-Fractional Kelly with hard caps. Negative-Kelly results return 0 (no bet).
+Two policies:
+  - Quarter-Kelly with hard caps.
+  - Flat: a fixed fraction of the *starting* bankroll, regardless of edge.
+    Useful when the model is uncalibrated enough that Kelly amplifies the
+    wrong bets, and when you want a predictable budget per bet.
 """
 
 from __future__ import annotations
@@ -29,3 +33,19 @@ class StakingPolicy:
         if capped < self.min_stake_gbp:
             return 0.0
         return float(capped)
+
+
+@dataclass
+class FlatStakingPolicy:
+    """Flat fraction of the *starting* bankroll. Stake doesn't change with
+    bankroll drift inside a fold — every bet is the same nominal size."""
+    starting_bankroll: float = 100.0
+    flat_pct: float = 0.02            # 2% of starting bankroll = 2 units of 100
+    min_stake_gbp: float = 2.0
+    max_stake_gbp: float = 1e9
+
+    def stake(self, prob: float, price: float) -> float:  # noqa: ARG002
+        raw = self.starting_bankroll * self.flat_pct
+        if raw < self.min_stake_gbp:
+            return 0.0
+        return float(min(raw, self.max_stake_gbp))
