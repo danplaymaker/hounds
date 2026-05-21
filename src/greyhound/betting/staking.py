@@ -44,7 +44,7 @@ class FlatStakingPolicy:
     min_stake_gbp: float = 2.0
     max_stake_gbp: float = 1e9
 
-    def stake(self, prob: float, price: float) -> float:  # noqa: ARG002
+    def stake(self, prob: float, price: float) -> float:
         raw = self.starting_bankroll * self.flat_pct
         if raw < self.min_stake_gbp:
             return 0.0
