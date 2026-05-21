@@ -28,6 +28,11 @@ data/live/
 # Runtime logs
 logs/
 
+# Secrets — Betfair credentials, app keys, etc.
+config/secrets.yaml
+config/secrets.local.yaml
+.env
+
 # Model artifacts (keep dir, not contents)
 models/artifacts/*
 !models/artifacts/.gitkeep
