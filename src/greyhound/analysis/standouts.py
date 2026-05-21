@@ -150,6 +150,7 @@ def report(picks: pl.DataFrame) -> str:
 # High-conviction subset: model_prob threshold validated to give ~40%
 # hit rate and positive flat-stake ROI in the backtest (2025-06 → 2026-04).
 HIGH_CONVICTION_MIN_PROB: float = 0.36
+MEDIUM_VOLUME_MIN_PROB: float = 0.25   # ~48% of races, ~30% hit, near break-even
 
 
 def high_conviction_report(picks: pl.DataFrame) -> str:
@@ -204,6 +205,13 @@ def main() -> None:
     high_csv = cfg.paths.processed_dir / "high_conviction_picks.csv"
     high.sort(["race_datetime", "model_prob"], descending=[False, True]).write_csv(high_csv)
 
+    # Medium-volume subset — the daily watchlist for the manual workflow:
+    # ~48% of races, ~30% hit rate, near break-even on flat stakes (the
+    # edge is meant to be extracted by manually pricing against live odds).
+    medium = picks_b.filter(pl.col("model_prob") >= MEDIUM_VOLUME_MIN_PROB)
+    medium_csv = cfg.paths.processed_dir / "medium_volume_picks.csv"
+    medium.sort(["race_datetime", "model_prob"], descending=[False, True]).write_csv(medium_csv)
+
     rep = report(picks) + "\n" + high_conviction_report(picks)
     print(rep)
     out_txt = cfg.paths.reports_dir / "standout_analysis.txt"
@@ -212,6 +220,7 @@ def main() -> None:
 
     log.info("Wrote %d picks to %s and %s", picks.height, out_pq, out_csv)
     log.info("Wrote %d high-conviction picks to %s", high.height, high_csv)
+    log.info("Wrote %d medium-volume picks to %s", medium.height, medium_csv)
     log.info("Wrote report to %s", out_txt)
 
 

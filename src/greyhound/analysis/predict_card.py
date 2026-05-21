@@ -31,7 +31,10 @@ from pathlib import Path
 
 import polars as pl
 
-from greyhound.analysis.standouts import HIGH_CONVICTION_MIN_PROB
+from greyhound.analysis.standouts import (
+    HIGH_CONVICTION_MIN_PROB,
+    MEDIUM_VOLUME_MIN_PROB,
+)
 from greyhound.data.schemas import load_config
 from greyhound.features.pipeline_fast import build_features_fast
 from greyhound.features.trap import fit_trap_winrate
@@ -180,6 +183,11 @@ def write_outputs(cfg, predictions: pl.DataFrame, target_date: datetime) -> None
     high.write_csv(out_high)
     log.info("Wrote %d high-conviction picks -> %s", high.height, out_high)
 
+    medium = standouts.filter(pl.col("model_prob") >= MEDIUM_VOLUME_MIN_PROB)
+    out_med = cfg.paths.processed_dir / f"medium_volume_{ds}.csv"
+    medium.write_csv(out_med)
+    log.info("Wrote %d medium-volume picks -> %s", medium.height, out_med)
+
     # Human-readable summary
     lines = [
         "=" * 72,
@@ -188,6 +196,7 @@ def write_outputs(cfg, predictions: pl.DataFrame, target_date: datetime) -> None
         f"Races scored:               {standouts.height}",
         f"Tracks:                     {standouts['track'].n_unique()}",
         f"High-conviction picks:      {high.height} (model_prob >= {HIGH_CONVICTION_MIN_PROB})",
+        f"Medium-volume picks:        {medium.height} (model_prob >= {MEDIUM_VOLUME_MIN_PROB})",
         "",
         "HIGH-CONVICTION PICKS (sorted by race time)",
         "-" * 72,
