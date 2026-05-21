@@ -147,6 +147,39 @@ def report(picks: pl.DataFrame) -> str:
     return "\n".join(lines) + "\n"
 
 
+# High-conviction subset: model_prob threshold validated to give ~40%
+# hit rate and positive flat-stake ROI in the backtest (2025-06 → 2026-04).
+HIGH_CONVICTION_MIN_PROB: float = 0.36
+
+
+def high_conviction_report(picks: pl.DataFrame) -> str:
+    """Summary of just the high-conviction subset (model_prob >= threshold)."""
+    import numpy as np
+    high = picks.filter(pl.col("model_prob") >= HIGH_CONVICTION_MIN_PROB)
+    high_b = high.filter(pl.col("bsp").is_not_null() & (pl.col("bsp") > 1.0))
+    lines = ["=" * 72,
+             f"HIGH-CONVICTION SUBSET (model_prob >= {HIGH_CONVICTION_MIN_PROB})",
+             "=" * 72,
+             f"Total picks:              {high.height:,}",
+             f"With BSP:                 {high_b.height:,}"]
+    if high_b.height:
+        bsp = high_b["bsp"].to_numpy()
+        won = high_b["won"].to_numpy()
+        stake = 2.0
+        gross = np.where(won == 1, stake * (bsp - 1.0), -stake)
+        com = np.where(gross > 0, gross * 0.05, 0.0)
+        pnl = gross - com
+        lines += [
+            f"Avg BSP:                  £{bsp.mean():.2f}",
+            f"Median BSP:               £{float(high_b['bsp'].median()):.2f}",
+            f"Hit rate:                 {won.mean():.1%}",
+            f"Flat 2-unit net P&L:      £{pnl.sum():+,.2f}",
+            f"Flat 2-unit ROI:          {pnl.sum() / (stake * high_b.height):+.2%}",
+        ]
+    lines.append("=" * 72)
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
     import argparse
     logging.basicConfig(level="INFO", format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -166,13 +199,19 @@ def main() -> None:
     out_csv = cfg.paths.processed_dir / "standout_picks.csv"
     picks_b.sort(["race_datetime", "model_prob"], descending=[False, True]).write_csv(out_csv)
 
-    rep = report(picks)
+    # High-conviction subset — a separate file the user can scan first.
+    high = picks_b.filter(pl.col("model_prob") >= HIGH_CONVICTION_MIN_PROB)
+    high_csv = cfg.paths.processed_dir / "high_conviction_picks.csv"
+    high.sort(["race_datetime", "model_prob"], descending=[False, True]).write_csv(high_csv)
+
+    rep = report(picks) + "\n" + high_conviction_report(picks)
     print(rep)
     out_txt = cfg.paths.reports_dir / "standout_analysis.txt"
     out_txt.parent.mkdir(parents=True, exist_ok=True)
     out_txt.write_text(rep, encoding="utf-8")
 
     log.info("Wrote %d picks to %s and %s", picks.height, out_pq, out_csv)
+    log.info("Wrote %d high-conviction picks to %s", high.height, high_csv)
     log.info("Wrote report to %s", out_txt)
 
 

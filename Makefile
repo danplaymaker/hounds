@@ -50,6 +50,9 @@ paper-trade: ## A5: daily paper-trading run
 standouts: ## Diagnostic: which dogs the model picks, BSP-blind
 	$(PY) greyhound.analysis.standouts    --config $(CONFIG)
 
+predict: ## Score a specific day. Usage: make predict DATE=2026-05-22
+	$(PY) greyhound.analysis.predict_card --config $(CONFIG) --date $(DATE)
+
 all: ingest features train backtest ## End-to-end Phase A
 
 clean-derived: ## Wipe interim+processed (keeps raw cache)
