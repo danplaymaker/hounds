@@ -147,7 +147,7 @@ def predict(cfg, target_date: datetime, extra_jsons: list[Path] | None = None) -
           .over("race_id")
           .alias("model_rank"),
     )
-    out = out.with_columns((1.0 / pl.col("model_prob")).alias("model_fair_price"))
+    out = out.with_columns((1.0 / pl.col("model_prob")).alias("model_fair_odds"))
 
     # Bring dog_name, trainer_name, sp, finish_position from raw runs.
     # finish_position lets us see how the prediction did when it's available.
@@ -163,7 +163,7 @@ def write_outputs(cfg, predictions: pl.DataFrame, target_date: datetime) -> None
     keep_cols = [
         "race_id", "race_datetime", "track", "distance_m", "grade",
         "dog_id", "dog_name", "trainer_name", "trap",
-        "model_rank", "model_prob", "model_fair_price",
+        "model_rank", "model_prob", "model_fair_odds",
         "sp", "finish_position",
     ]
     full = predictions.select([c for c in keep_cols if c in predictions.columns]).sort(
@@ -209,7 +209,7 @@ def write_outputs(cfg, predictions: pl.DataFrame, target_date: datetime) -> None
         return (
             f"  {tm}  {r['track']:13s} {r['distance_m']:>4}m  "
             f"T{r['trap']}  {name:22s}  "
-            f"prob={r['model_prob']:.3f}  fair=£{r['model_fair_price']:.2f}  "
+            f"prob={r['model_prob']:.3f}  fair_odds={r['model_fair_odds']:.2f}  "
             f"{sp:9s}  {fin}"
         )
 
