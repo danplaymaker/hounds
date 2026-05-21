@@ -47,6 +47,9 @@ backtest: ## A4: walk-forward backtest -> backtest_results.parquet + report
 paper-trade: ## A5: daily paper-trading run
 	$(PY) greyhound.live.paper_trade      --config $(CONFIG)
 
+standouts: ## Diagnostic: which dogs the model picks, BSP-blind
+	$(PY) greyhound.analysis.standouts    --config $(CONFIG)
+
 all: ingest features train backtest ## End-to-end Phase A
 
 clean-derived: ## Wipe interim+processed (keeps raw cache)
