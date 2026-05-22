@@ -62,6 +62,37 @@ UA = (
     "(KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 )
 
+# Friendly name -> Oddschecker bookmaker short-code. Extend as you confirm
+# more codes from the page. The script also accepts the short codes directly
+# in --books, so missing entries here don't break anything; they just mean
+# you have to type the short code instead of the brand name.
+BOOKMAKER_CODES: dict[str, str] = {
+    "bet365":      "B3",
+    "williamhill": "WH",
+    "paddypower":  "PP",
+    "skybet":      "SX",
+    "ladbrokes":   "LD",
+    "coral":       "CE",
+    "betfred":     "FR",
+    "boylesports": "BR",
+    "unibet":      "UN",
+    "betvictor":   "BE",
+    "betfair":     "BF",
+    "888sport":    "EE",
+    "betway":      "BY",
+}
+
+
+def resolve_book_codes(books_arg: str) -> list[str]:
+    """Accept either friendly names or short codes in the --books flag."""
+    out: list[str] = []
+    for b in books_arg.split(","):
+        b = b.strip()
+        if not b:
+            continue
+        out.append(BOOKMAKER_CODES.get(b.lower(), b))   # pass through unknown
+    return out
+
 
 def fractional_to_decimal(s: str) -> float | None:
     """'9/4' -> 3.25, '5/2F' -> 3.50, 'EVS' -> 2.0, '2.85' -> 2.85."""
@@ -105,44 +136,47 @@ def make_session():
 
 
 def parse_oddschecker_html(html: str, want_books: list[str]) -> list[dict]:
-    """Parse Oddschecker's bookmaker odds table. Returns list of:
-        {'dog_name': str, 'prices': {book_id: decimal_odds, ...}}
+    """Parse Oddschecker's bookmaker odds table.
 
-    The HTML structure is a table where each row is a runner and the
-    cells are per-bookmaker prices. We use multiple selectors because
-    the layout has shifted historically.
+    Returns list of {'dog_name': str, 'prices': {book_code: decimal_odds, ...}}.
+
+    Book codes are upper-case short codes ('B3', 'WH', ...). Cells with
+    data-odig='0' or inner text 'SP' are skipped — those bookmakers
+    haven't priced the race yet and only offer Starting Price.
     """
     try:
         from selectolax.parser import HTMLParser
     except ImportError:
-        from html.parser import HTMLParser as _HTMLParser  # noqa: F401
         raise SystemExit("Install selectolax: pip3 install selectolax")
 
     tree = HTMLParser(html)
     runners: list[dict] = []
+    want_set = {b.upper() for b in want_books}
 
-    # Strategy: find the odds table. Rows have data-bname (runner name)
-    # and cells have data-bk (bookmaker id) and data-odig (decimal odds).
     rows = tree.css("tr[data-bname]")
     for row in rows:
         name = (row.attributes.get("data-bname") or "").strip()
-        # Drop the trap-number prefix Oddschecker sometimes inserts.
         name_clean = re.sub(r"^\d+\.\s*", "", name).strip()
         prices: dict[str, float] = {}
         for cell in row.css("td[data-bk]"):
-            bk = (cell.attributes.get("data-bk") or "").strip().lower()
-            if want_books and bk not in want_books:
+            bk_raw = cell.attributes.get("data-bk") or ""
+            bk = bk_raw.strip().upper()
+            if not bk:
                 continue
-            odig = cell.attributes.get("data-odig")
-            if odig:
-                try:
-                    price = float(odig)
-                except ValueError:
-                    price = None
-            else:
-                # Fall back to inner text — sometimes fractional only.
+            if want_set and bk not in want_set:
+                continue
+            odig = cell.attributes.get("data-odig") or ""
+            price: float | None = None
+            try:
+                v = float(odig)
+                if v > 1.0:
+                    price = v
+            except ValueError:
+                pass
+            if price is None:
                 text = cell.text(strip=True)
-                price = fractional_to_decimal(text)
+                if text and text.upper() != "SP":
+                    price = fractional_to_decimal(text)
             if price and price > 1.0:
                 prices[bk] = price
         if name_clean and prices:
@@ -174,14 +208,17 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="Output CSV path.")
     ap.add_argument(
         "--books",
-        default="bet365,skybet,paddypower,williamhill,coral,ladbrokes,betfred,unibet,bet-victor,boylesports",
-        help="Comma-separated bookmaker IDs to include.",
+        default="bet365,skybet,paddypower,williamhill,coral,ladbrokes,betfred,boylesports,unibet,betvictor",
+        help=("Comma-separated bookmaker names (bet365, skybet, ...) or "
+              "Oddschecker short codes (B3, WH, ...). Unknown names are "
+              "passed through as-is so you can add codes ad-hoc."),
     )
     ap.add_argument("--delay", type=float, default=2.0,
                     help="Polite delay between Oddschecker requests (default 2s).")
     args = ap.parse_args()
 
-    want_books = [b.strip().lower() for b in args.books.split(",") if b.strip()]
+    want_books = resolve_book_codes(args.books)
+    print(f"Looking for bookmakers: {want_books}")
 
     rows = list(csv.DictReader(open(args.standouts)))
     if not rows:
