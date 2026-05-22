@@ -215,8 +215,12 @@ def main() -> int:
         if not slug:
             print(f"Skip — unknown track slug: {track}", file=sys.stderr)
             continue
-        # Parse "2026-05-22T13:36:00+00:00" or similar
-        race_dt = datetime.fromisoformat(race_dt_str.replace("Z", "+00:00"))
+        # Parse various ISO formats. Python 3.9 needs '+00:00', not '+0000'.
+        s = race_dt_str.replace("Z", "+00:00")
+        m = re.search(r"([+\-])(\d{2})(\d{2})$", s)
+        if m:
+            s = s[:m.start()] + f"{m.group(1)}{m.group(2)}:{m.group(3)}"
+        race_dt = datetime.fromisoformat(s)
         # Convert to UK local for the URL
         import zoneinfo
         race_dt_uk = race_dt.astimezone(zoneinfo.ZoneInfo("Europe/London"))
