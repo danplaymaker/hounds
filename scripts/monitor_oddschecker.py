@@ -152,15 +152,49 @@ def parse_prices(html: str, want_books: set[str]) -> dict[str, dict[str, float]]
     return out
 
 
-def mac_notify(title: str, message: str, *, sound: str = "Glass") -> None:
+def play_sound(name: str = "Glass") -> None:
+    """Play a system sound without needing notification permissions.
+    `afplay` is built into macOS, no perms required."""
     try:
-        # Escape any double quotes
-        title_e = title.replace('"', '\\"')
-        msg_e = message.replace('"', '\\"')
+        subprocess.run(
+            ["afplay", f"/System/Library/Sounds/{name}.aiff"],
+            check=False, timeout=5,
+        )
+    except Exception:
+        pass
+
+
+def mac_notify(title: str, message: str, *, sound: str = "Glass") -> None:
+    """Best-effort macOS banner.
+
+    Tries `terminal-notifier` first (clean, doesn't need scripting perms),
+    falls back to `osascript`. Either way also plays a sound via afplay
+    so you get audible feedback even if banner permissions aren't set.
+    """
+    title_e = title.replace('"', '\\"')
+    msg_e = message.replace('"', '\\"')
+    # Always play the chime — afplay needs no permission
+    play_sound(sound)
+    # Try terminal-notifier (best UX)
+    try:
+        r = subprocess.run(
+            ["terminal-notifier", "-title", title, "-message", message, "-sound", sound],
+            check=False, timeout=5,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        if r.returncode == 0:
+            return
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    # Fallback to osascript
+    try:
         subprocess.run(
             ["osascript", "-e",
              f'display notification "{msg_e}" with title "{title_e}" sound name "{sound}"'],
             check=False, timeout=5,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception:
         pass
