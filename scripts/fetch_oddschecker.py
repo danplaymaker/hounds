@@ -85,13 +85,12 @@ def fractional_to_decimal(s: str) -> float | None:
 
 
 def build_url(track_slug: str, race_dt: datetime) -> str:
-    """Oddschecker race-card URL pattern:
-        https://www.oddschecker.com/greyhounds/<track>/<DD-MM-YYYY>-<HHMM>-winner
-    Times are 24-hour UK-local with no separator (e.g. 1830).
+    """Oddschecker race-card URL pattern (as of 2026):
+        https://www.oddschecker.com/greyhounds/<YYYY-MM-DD>-<track>/<HH:MM>/winner
     """
-    date_part = race_dt.strftime("%d-%m-%Y")
-    time_part = race_dt.strftime("%H%M")
-    return f"https://www.oddschecker.com/greyhounds/{track_slug}/{date_part}-{time_part}-winner"
+    date_part = race_dt.strftime("%Y-%m-%d")
+    time_part = race_dt.strftime("%H:%M")
+    return f"https://www.oddschecker.com/greyhounds/{date_part}-{track_slug}/{time_part}/winner"
 
 
 def make_session():
